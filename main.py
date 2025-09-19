@@ -2,11 +2,13 @@ import argparse, \
        re, \
        yaml, \
        concurrent.futures
+import time
 
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+import google.api_core.exceptions
 from tqdm import tqdm
 import signal
 
@@ -48,11 +50,26 @@ def system_prompt(from_lang, to_lang):
 
 
 def translate_chunk(model, text, from_lang='EN', to_lang='PL'):
-    response = model.generate_content(
-        system_prompt(from_lang, to_lang) + text
-    )
+    retries = 5
+    delay = 60  # 1 minute
 
-    return response.text
+    for attempt in range(retries):
+        try:
+            response = model.generate_content(
+                system_prompt(from_lang, to_lang) + text
+            )
+            return response.text
+        except google.api_core.exceptions.ResourceExhausted as e:
+            if attempt < retries - 1:
+                print(f"Rate limit exceeded. Attempt {attempt + 1}/{retries} failed. Waiting for {delay} seconds before retrying...")
+                time.sleep(delay)
+            else:
+                print(f"Rate limit exceeded. All {retries} attempts failed.")
+                raise e
+        except Exception as e:
+            print(f"An unexpected error occurred while translating chunk: {e}")
+            raise e
+
 
 def translate(client, input_epub_path, output_epub_path, from_chapter=0, to_chapter=9999, from_lang='EN', to_lang='PL', n_worker=5):
     book = epub.read_epub(input_epub_path)
